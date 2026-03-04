@@ -63,8 +63,8 @@ model = DQN(
 
 # Configuration
 TOTAL_TIMESTEPS = 1000000
-SHOCK_STEP = 50000          # Change difficulty halfway through
-NEW_DIFFICULTY = 15         # Hard mode (Speed = 15)
+SHOCK_STEP = 500000          # Change difficulty halfway through
+NEW_DIFFICULTY = 7         # Hard mode (Speed = 15)
 
 # Initialize the callback
 shock_callback = DifficultyShockCallback(shock_step=SHOCK_STEP, new_difficulty=NEW_DIFFICULTY)
