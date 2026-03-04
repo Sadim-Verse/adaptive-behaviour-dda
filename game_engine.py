@@ -33,7 +33,7 @@ class GameEngine:
         self.clock_tick = 0 # To track spawning
 
     def reset(self):
-        """Resets the game to the starting state."""
+        # Resets the game to the starting state.
         self.player_x = self.width // 2
         self.enemies = []
         self.score = 0
@@ -45,16 +45,14 @@ class GameEngine:
         return self.get_state()
     
     def set_difficulty(self, speed_level):
-        """ Core Function. Adjust physics parameters dynamically. """
+        # Core Function. Adjust physics parameters dynamically.
         self.enemy_speed = speed_level
         # Optional: Make enemies spawn faster as speed increases
         self.spawn_rate = max(5, 30 - int(speed_level))
 
     def step(self, action):
-        """
-        Advances the game logic by one frame.
-        action: 0 = Stay, 1 = Left, 2 = Right
-        """
+        # Advances the game logic by one frame. action: 0 = Stay, 1 = Left, 2 = Right
+        
         if self.game_over:
             return self.get_state(), 0, True # State, Reward, Done
 
