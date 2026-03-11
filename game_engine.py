@@ -21,8 +21,8 @@ class GameEngine:
         self.height = HEIGHT
 
         # Difficulty parameters
-        self.enemy_speed = 2    # Initial speed (level 1)
-        self.spawn_rate = 20    # How often enemies spawn (frames)
+        self.enemy_speed = 5    # Initial speed (level 1)
+        self.spawn_rate = 10    # How often enemies spawn (frames)
 
         # Game State
         self.player_x = self.width // 2
@@ -67,7 +67,7 @@ class GameEngine:
         self.clock_tick += 1
         if self.clock_tick >= self.spawn_rate:
             # 70% chance to target player, 30% random
-            if random.random() < 0.5:
+            if random.random() < 0.7:
                 # Spawn roughly above the player
                 offset = random.randint(-20, 20)    # small random offset
                 enemy_x = self.player_x + offset
@@ -106,25 +106,28 @@ class GameEngine:
         return self.get_state(), reward, self.game_over
     
     def get_state(self):
-        """
-        Returns the raw numbers the AI needs to 'see'.
-        We return: [Player X, Closest Enemy X, Closest Enemy Y]
-        We normalize these numbers (0.0 to 1.0) because Neural Networks love small numbers.
-        """
-        # Find closest enemy (if any)
-        closest_enemy_x = 0
-        closest_enemy_y = 0
-        
-        # Focus on enemies closest to the bottom
-        if len(self.enemies) > 0:
-            # Sort by Y descending (highest Y = closest to bottom/player)
-            most_dangerous_enemy = max(self.enemies, key=lambda e: e[1])
-            closest_enemy_x = most_dangerous_enemy[0] / self.width
-            closest_enemy_y = most_dangerous_enemy[1] / self.height
-        
-        norm_player_x = self.player_x / self.width
-        
-        return np.array([norm_player_x, closest_enemy_x, closest_enemy_y], dtype=np.float32)
+        # Upgrade the vision, see the 3 closest threats
+        # Sort enemies by Y descending (highest Y = closest to bottom/player)
+        sorted_enemies = sorted(self.enemies, key=lambda e: e[1], reverse=True)
+
+        # State vector starts with player X
+        state = [self.player_x / self.width]
+
+        # Add the 3 closest enemies
+        for i in range(3):
+            if i < len(sorted_enemies):
+                # If an enemy exists, add its normalized X and Y
+                state.append(sorted_enemies[i][0] / self.width)
+                state.append(sorted_enemies[i][1] / self.height)
+            else:
+                # If there are less than 3 enemies on screen, pad with 0.0
+                # (Pretending there is an enemy safely at the top-left corner)
+                state.append(0.0)
+                state.append(0.0)
+
+        # Returns an array of 7 numbers: 
+        # [PlayerX, En1X, En1Y, En2X, En2Y, En3X, En3Y]
+        return np.array(state, dtype=np.float32)
 
     def render(self, screen):
         """

@@ -14,7 +14,7 @@ print("Watching the Agent play...")
 
 # Play Loop
 obs, _ = env.reset()
-for i in range(1000):
+for i in range(100000):
     # Ask the AI what to do
     action, _states = model.predict(obs, deterministic=True)
 

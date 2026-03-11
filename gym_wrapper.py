@@ -27,7 +27,7 @@ class AdaptiveGameEnv(gym.Env):
         self.observation_space = spaces.Box(
             low=0.0, 
             high=1.0, 
-            shape=(3,), 
+            shape=(7,), 
             dtype=np.float32
         )
 
