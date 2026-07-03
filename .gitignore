@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+venv311/
+ENV/
+env.bak/
+venv.bak/
+
+# Logs and data
+logs/
+*.npy
+*.csv
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.mp4
+*.avi
+
+# TensorBoard
+events.out.tfevents.*
+*.tfevents.*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+*.ipynb
+
+# PyTorch
+*.pt
+*.pth
+*.pkl
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+*.egg
+
+# OS
+Thumbs.db
