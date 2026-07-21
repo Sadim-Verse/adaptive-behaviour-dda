@@ -16,9 +16,9 @@ algorithms = ['DQN', 'DDQN', 'PPO']
 
 # Full System (DDA) — from Table 3
 full_system = {
-    'DQN':  {'mean_reward': 975.5,  'fzc': 52.9},
-    'DDQN': {'mean_reward': 1174.3, 'fzc': 63.8},
-    'PPO':  {'mean_reward': 1005.1, 'fzc': 72.9}
+    'DQN':  {'mean_reward': 613.5,  'fzc': 56.3},
+    'DDQN': {'mean_reward': 788.6, 'fzc': 68.3},
+    'PPO':  {'mean_reward': 678.8, 'fzc': 78.9}
 }
 
 # No DDA (Fixed Speed 6.0) — from ablation results
@@ -144,7 +144,7 @@ fig.suptitle(
     fontweight='bold'
 )
 plt.tight_layout()
-plt.savefig('./logs/figures/figure7_static_vs_adaptive.png', dpi=300, bbox_inches='tight')
+plt.savefig('./report_figures/figure7_static_vs_adaptive.png', dpi=300, bbox_inches='tight')
 plt.close()
 
-print("✅ Figure 7 saved to ./logs/figures/figure7_static_vs_adaptive.png")
+print("✅ Figure 7 saved to ./report_figures/figure7_static_vs_adaptive.png")

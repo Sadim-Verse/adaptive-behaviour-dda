@@ -206,7 +206,7 @@ class MultiChaseEnv(gym.Env):
 
     def set_difficulty(self, new_speed):
         """Called by the DDA Controller to adjust base enemy fall speed."""
-        self.enemy_speed = float(np.clip(new_speed, 0.3, 6.0))
+        self.enemy_speed = float(np.clip(new_speed, 0.3, 9.0))
 
     # ------------------------------------------------------------------ #
     #  Rendering                                                           #

@@ -98,7 +98,7 @@ class ChaseEnv(gym.Env):
 
     def set_difficulty(self, new_speed):
         """Called by the DDA controller to adjust the enemy fall speed."""
-        self.enemy_speed = np.clip(new_speed, 0.3, 6.0)
+        self.enemy_speed = np.clip(new_speed, 0.3, 9.0)
 
     def render(self):
         """Draw the game frame using Pygame (only in 'human' mode)."""

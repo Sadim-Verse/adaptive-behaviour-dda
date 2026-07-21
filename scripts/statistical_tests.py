@@ -3,134 +3,142 @@
 STATISTICAL SIGNIFICANCE TESTS FOR TABLE 4
 
 Computes pairwise comparisons between algorithms on:
-    - Single Environment (FZC, Mean Reward, Adaptation Latency)
-    - Multi Environment (FZC, Mean Reward, Adaptation Latency)
-
-Tests used:
-    - Mann-Whitney U (non-parametric, for FZC and Reward Stability)
-    - Welch t-test (parametric, handles unequal variances, for Latency)
+    - Single, Multi, Procedural (ObstacleMiniGrid) environments
+    - FZC (Mann-Whitney U), Mean Reward (Welch t-test), Adaptation Latency (Welch t-test)
 
 Data: 5 seeds per algorithm (42, 105, 777, 999, 2026)
 Significance threshold: p < 0.05
+
+FIXES APPLIED IN THIS VERSION:
+1. Path construction no longer adds an extra "ddqn"/"dqn"/"ppo" subfolder
+   for Single/Multi environments — the data is in the flat structure directly
+   under ./logs/experiments/ (same as the ablation script).
+2. Adaptation Latency now uses sample standard deviation (ddof=1) consistently
+   with the established convention in run_delta_sensitivity.py.
+3. FLOW_ZONES imported from training.train_multi_env (single source of truth).
+4. Procedural (obstacle_minigrid) included with its own base log directory.
+5. Sentinel values (>= 500) excluded from latency comparisons.
 """
 
 import os
+import argparse
 import numpy as np
 from scipy import stats
 from itertools import combinations
 
 # ── Configuration ────────────────────────────────────────────────────────── #
 
-BASE_LOG_DIR = "./logs/experiments"
+try:
+    from training.train_multi_env import FLOW_ZONES as _FLOW_ZONES_RAW
+    FLOW_ZONES = {env: bounds["default"] for env, bounds in _FLOW_ZONES_RAW.items()}
+except ImportError:
+    print("WARNING: could not import FLOW_ZONES from training.train_multi_env "
+          "(run this as `python -m scripts.statistical_tests` from the project "
+          "root). Falling back to last-confirmed printed values.")
+    FLOW_ZONES = {
+        "single": (296.0, 765.0),
+        "multi": (245.6, 470.1),
+        "obstacle_minigrid": (-74.5, -23.7),
+    }
+
 ALGOS = ["dqn", "ddqn", "ppo"]
 SEEDS = [42, 105, 777, 999, 2026]
-ENVS = ["single", "multi"]
+ENVS = ["single", "multi", "obstacle_minigrid"]
 WINDOW_SIZE = 10
+N_EPISODES_SPIKE_RUN = 500  # non-recovery sentinel cutoff
 
-# Flow zone bounds
-FLOW_ZONES = {
-    "single": (600.0, 1200.0),
-    "multi": (220.0, 470.0)
+BASE_LOG_DIRS = {
+    "single": "./logs/experiments",
+    "multi": "./logs/experiments",
+    "obstacle_minigrid": "./logs/procedural_env_v2",
 }
 
-# Algorithm folder mapping
-ALGO_FOLDERS = {
-    "dqn": "dqn",
-    "ddqn": "ddqn",
-    "ppo": "ppo"
-}
+
+def run_folder_name(env, algo, seed, spike=False):
+    suffix = "_spike" if spike else ""
+    return f"{env}_{algo}_delta0p05_seed{seed}{suffix}"
+
+
+def run_folder_path(env, algo, seed, spike=False):
+    """
+    FLAT STRUCTURE — no extra per-algo subfolder for any environment.
+    This matches where run_all_evaluations.py saves the data.
+    """
+    base = BASE_LOG_DIRS[env]
+    folder = run_folder_name(env, algo, seed, spike)
+    return os.path.join(base, folder)
+
 
 # ── Helper Functions ─────────────────────────────────────────────────────── #
 
 def load_metrics(algo, env):
-    """Load per-seed metrics for one algorithm and environment."""
+    """Load per-seed steady-mode metrics (mean reward, FZC) for one algorithm/environment."""
     rewards_all = []
     fzc_all = []
-    latency_all = []
-
     flow_low, flow_high = FLOW_ZONES[env]
-    algo_folder = ALGO_FOLDERS[algo]
 
     for seed in SEEDS:
-        run_folder = f"{env}_{algo}_delta0p05_seed{seed}"
-        folder_path = os.path.join(BASE_LOG_DIR, algo_folder, run_folder)
-
+        folder_path = run_folder_path(env, algo, seed, spike=False)
         rewards_file = os.path.join(folder_path, "episode_rewards.npy")
         rolling_file = os.path.join(folder_path, "rolling_avg.npy")
 
         if not (os.path.exists(rewards_file) and os.path.exists(rolling_file)):
-            print(f"  ⚠️ Missing files for {algo.upper()} {env} seed {seed}")
+            print(f"  WARNING: missing files for {algo.upper()} {env} seed {seed}: {folder_path}")
             continue
 
         rewards = np.load(rewards_file)
         rolling_avg = np.load(rolling_file)
 
-        # Mean episode reward
         mean_rew = float(np.mean(rewards))
-
-        # FZC — proportion of rolling-avg episodes inside Flow Zone
         valid_avgs = rolling_avg[WINDOW_SIZE - 1:]
         fzc = float(np.mean((valid_avgs >= flow_low) & (valid_avgs <= flow_high))) * 100.0
 
-        # Adaptation Latency — first episode where rolling avg enters flow zone
-        latency = len(rolling_avg)
-        for idx, avg in enumerate(rolling_avg):
-            if flow_low <= avg <= flow_high:
-                latency = idx + 1
-                break
-
         rewards_all.append(mean_rew)
         fzc_all.append(fzc)
-        latency_all.append(float(latency))
 
     return {
         "mean_reward": np.array(rewards_all),
         "fzc": np.array(fzc_all),
-        "latency": np.array(latency_all),
     }
 
 
-def load_latency_spike(algo, env):
-    """Load Adaptation Latency from SPIKE mode runs."""
-    latency_all = []
-    flow_low, flow_high = FLOW_ZONES[env]
-    algo_folder = ALGO_FOLDERS[algo]
-
+def load_latency_spike(algo, env, n_episodes=N_EPISODES_SPIKE_RUN):
+    """
+    Load Adaptation Latency from SPIKE mode runs, split into recovered vs
+    censored (sentinel) seeds.
+    Returns (recovered_latencies, n_total, recovery_rate).
+    """
+    all_latencies = []
     for seed in SEEDS:
-        run_folder = f"{env}_{algo}_delta0p05_seed{seed}_spike"
-        folder_path = os.path.join(BASE_LOG_DIR, algo_folder, run_folder)
-
+        folder_path = run_folder_path(env, algo, seed, spike=True)
         latency_file = os.path.join(folder_path, "adaptation_latency.npy")
-
         if not os.path.exists(latency_file):
-            print(f"  ⚠️ Missing latency file for {algo.upper()} {env} seed {seed} (spike mode)")
+            print(f"  WARNING: missing latency file for {algo.upper()} {env} seed {seed} (spike): {folder_path}")
             continue
-
         latency = np.load(latency_file)
         if len(latency) > 0:
-            latency_all.append(float(latency[0]))
+            all_latencies.append(float(np.asarray(latency).flatten()[0]))
 
-    return np.array(latency_all)
+    all_latencies = np.array(all_latencies)
+    n_total = len(all_latencies)
+    recovered = all_latencies[all_latencies < n_episodes] if n_total else all_latencies
+    recovery_rate = (len(recovered) / n_total) if n_total else float("nan")
+    return recovered, n_total, recovery_rate
 
 
 def run_mannwhitney(a_data, b_data):
-    """Run Mann-Whitney U test."""
     if len(a_data) < 2 or len(b_data) < 2:
         return None
-    stat, p = stats.mannwhitneyu(a_data, b_data, alternative="two-sided")
-    return stat, p
+    return stats.mannwhitneyu(a_data, b_data, alternative="two-sided")
 
 
 def run_welch_ttest(a_data, b_data):
-    """Run Welch t-test (unequal variance)."""
     if len(a_data) < 2 or len(b_data) < 2:
         return None
-    stat, p = stats.ttest_ind(a_data, b_data, equal_var=False)
-    return stat, p
+    return stats.ttest_ind(a_data, b_data, equal_var=False)
 
 
 def sig_stars(p):
-    """Convert p-value to significance stars."""
     if p < 0.001:
         return "***"
     if p < 0.01:
@@ -142,130 +150,86 @@ def sig_stars(p):
 
 # ── Main ─────────────────────────────────────────────────────────────────── #
 
-print("=" * 90)
-print("TABLE 4 — STATISTICAL SIGNIFICANCE TESTS")
-print("=" * 90)
-print(f"  Algorithms: {', '.join([a.upper() for a in ALGOS])}")
-print(f"  Seeds: {SEEDS}")
-print(f"  Environments: {', '.join([e.upper() for e in ENVS])}")
-print(f"  Significance threshold: p < 0.05")
-print("=" * 90)
+def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--envs", nargs="+", default=ENVS, choices=ENVS)
+    args = ap.parse_args()
 
-# Store results for formatting
-table_rows = []
+    print("=" * 90)
+    print("TABLE 4 -- STATISTICAL SIGNIFICANCE TESTS")
+    print("=" * 90)
+    print(f"  Algorithms: {', '.join(a.upper() for a in ALGOS)}")
+    print(f"  Seeds: {SEEDS}")
+    print(f"  Environments: {', '.join(e.upper() for e in args.envs)}")
+    print(f"  Flow Zones (imported): {FLOW_ZONES}")
+    print(f"  Significance threshold: p < 0.05")
+    print("=" * 90)
 
-for env in ENVS:
-    print(f"\n{'─'*90}")
-    print(f"ENVIRONMENT: {env.upper()}")
-    print(f"{'─'*90}")
+    for env in args.envs:
+        print(f"\n{'-'*90}")
+        print(f"ENVIRONMENT: {env.upper()}")
+        print(f"{'-'*90}")
 
-    # Load data for this environment
-    data = {}
-    for algo in ALGOS:
-        data[algo] = load_metrics(algo, env)
+        data = {algo: load_metrics(algo, env) for algo in ALGOS}
+        spike_latency = {}
+        for algo in ALGOS:
+            recovered, n_total, rate = load_latency_spike(algo, env)
+            spike_latency[algo] = recovered
+            if n_total:
+                lat_str = (f"{np.mean(recovered):.1f} +/- {np.std(recovered, ddof=1):.1f} eps "
+                           f"({len(recovered)}/{n_total} recovered)")
+                print(f"  {algo.upper():<5} recovery rate: {rate:.0%} | latency: {lat_str}")
+            else:
+                print(f"  {algo.upper():<5} no data")
 
-    # Load spike latency data
-    spike_latency = {}
-    for algo in ALGOS:
-        spike_latency[algo] = load_latency_spike(algo, env)
+        print(f"\nDescriptive Summary ({env.upper()}):")
+        print(f"{'Algorithm':<10} | {'Mean Reward':<15} | {'FZC (%)':<12}")
+        print("-" * 45)
+        for algo in ALGOS:
+            d = data[algo]
+            if len(d["mean_reward"]) == 0:
+                print(f"{algo.upper():<10} | NO DATA")
+                continue
+            print(f"{algo.upper():<10} | "
+                  f"{np.mean(d['mean_reward']):>6.1f} +/- {np.std(d['mean_reward']):<5.1f} | "
+                  f"{np.mean(d['fzc']):>5.1f}% +/- {np.std(d['fzc']):<4.1f}%")
 
-    # Descriptive summary
-    print(f"\nDescriptive Summary ({env.upper()}):")
-    print(f"{'Algorithm':<10} | {'Mean Reward':<15} | {'FZC (%)':<12} | {'Latency (eps)':<15}")
-    print("-" * 60)
-    for algo in ALGOS:
-        d = data[algo]
-        lat_mean = np.mean(spike_latency[algo]) if len(spike_latency[algo]) > 0 else float('nan')
-        lat_std = np.std(spike_latency[algo]) if len(spike_latency[algo]) > 0 else float('nan')
-        print(f"{algo.upper():<10} | "
-              f"{np.mean(d['mean_reward']):>6.1f} ± {np.std(d['mean_reward']):<5.1f} | "
-              f"{np.mean(d['fzc']):>5.1f}% ± {np.std(d['fzc']):<4.1f}% | "
-              f"{lat_mean:>5.1f} ± {lat_std:<5.1f}")
+        print(f"\nPairwise Comparisons ({env.upper()}):")
+        print("-" * 90)
+        print(f"{'Comparison':<16} | {'Metric':<20} | {'Test':<16} | {'p-value':>10} | {'Sig':>5} | Note")
+        print("-" * 90)
 
-    # Pairwise comparisons
-    print(f"\nPairwise Comparisons ({env.upper()}):")
-    print("-" * 90)
-    print(f"{'Comparison':<16} | {'Metric':<22} | {'Test':<18} | {'p-value':>10} | {'Sig':>5} | {'Significant?'}")
-    print("-" * 90)
+        for algo_a, algo_b in combinations(ALGOS, 2):
+            comp = f"{algo_a.upper()} vs {algo_b.upper()}"
 
-    pairs = list(combinations(ALGOS, 2))
+            res = run_mannwhitney(data[algo_a]["fzc"], data[algo_b]["fzc"])
+            if res is not None:
+                p = res.pvalue
+                print(f"{comp:<16} | {'FZC':<20} | {'Mann-Whitney U':<16} | {p:>10.4f} | {sig_stars(p):>5} |")
 
-    for algo_a, algo_b in pairs:
-        # FZC (Mann-Whitney U)
-        stat, p = run_mannwhitney(data[algo_a]["fzc"], data[algo_b]["fzc"])
-        if stat is not None:
-            sig = p < 0.05
-            print(f"{algo_a.upper()} vs {algo_b.upper():<8} | FZC{' ':<19} | Mann-Whitney U{' ':<6} | "
-                  f"{p:>10.4f} | {sig_stars(p):>5} | {'YES' if sig else 'NO'}")
+            res = run_welch_ttest(data[algo_a]["mean_reward"], data[algo_b]["mean_reward"])
+            if res is not None:
+                p = res.pvalue
+                print(f"{comp:<16} | {'Mean Reward':<20} | {'Welch t-test':<16} | {p:>10.4f} | {sig_stars(p):>5} |")
 
-        # Mean Reward (Welch t-test)
-        stat, p = run_welch_ttest(data[algo_a]["mean_reward"], data[algo_b]["mean_reward"])
-        if stat is not None:
-            sig = p < 0.05
-            print(f"{algo_a.upper()} vs {algo_b.upper():<8} | Mean Reward{' ':<12} | Welch t-test{' ':<8} | "
-                  f"{p:>10.4f} | {sig_stars(p):>5} | {'YES' if sig else 'NO'}")
+            a_lat, b_lat = spike_latency[algo_a], spike_latency[algo_b]
+            res = run_welch_ttest(a_lat, b_lat)
+            if res is not None:
+                p = res.pvalue
+                note = "" if (len(a_lat) == len(SEEDS) and len(b_lat) == len(SEEDS)) else \
+                       f"partial recovery ({len(a_lat)}/{len(SEEDS)} vs {len(b_lat)}/{len(SEEDS)})"
+                print(f"{comp:<16} | {'Adaptation Latency':<20} | {'Welch t-test':<16} | {p:>10.4f} | {sig_stars(p):>5} | {note}")
+            else:
+                print(f"{comp:<16} | {'Adaptation Latency':<20} | {'Welch t-test':<16} | {'SKIPPED':>10} | {'':>5} | "
+                      f"fewer than 2 recovered seeds in at least one group")
 
-        # Adaptation Latency (Spike) (Welch t-test)
-        a_lat = spike_latency[algo_a]
-        b_lat = spike_latency[algo_b]
-        if len(a_lat) > 0 and len(b_lat) > 0:
-            stat, p = run_welch_ttest(a_lat, b_lat)
-            if stat is not None:
-                sig = p < 0.05
-                print(f"{algo_a.upper()} vs {algo_b.upper():<8} | Adaptation Latency{' ':<5} | Welch t-test{' ':<8} | "
-                      f"{p:>10.4f} | {sig_stars(p):>5} | {'YES' if sig else 'NO'}")
+        print("-" * 90)
 
-    print("-" * 90)
+    print("\nLEGEND: *  p<0.05 | **  p<0.01 | ***  p<0.001 | ns = not significant")
+    print("Mann-Whitney U for FZC (non-parametric, n=5). Welch t-test for Mean Reward and")
+    print("Latency (parametric, unequal variance). Latency comparisons exclude non-recovery")
+    print("sentinel values (Priority 6) -- recovery rate is reported alongside each result.")
 
-print("\n" + "=" * 90)
-print("LEGEND:")
-print("  *  p < 0.05  |  **  p < 0.01  |  ***  p < 0.001  |  ns = not significant")
-print("  Mann-Whitney U used for FZC (non-parametric, n=5)")
-print("  Welch t-test used for Mean Reward and Latency (parametric, unequal variance)")
-print("  Adaptation Latency measured from SPIKE mode (recovery from difficulty shock)")
-print("=" * 90)
 
-# ── Formatted Table 4 Output ────────────────────────────────────────────── #
-
-print("\n\n" + "=" * 90)
-print("TABLE 4 — FORMATTED FOR THESIS")
-print("=" * 90)
-print(f"{'Comparison':<16} | {'Metric':<22} | {'Test':<18} | {'p-value':>10} | {'Significant?'}")
-print("-" * 90)
-
-for env in ENVS:
-    print(f"\n{env.upper()} ENVIRONMENT:")
-    data = {}
-    for algo in ALGOS:
-        data[algo] = load_metrics(algo, env)
-    spike_latency = {}
-    for algo in ALGOS:
-        spike_latency[algo] = load_latency_spike(algo, env)
-
-    pairs = list(combinations(ALGOS, 2))
-    for algo_a, algo_b in pairs:
-        # FZC
-        stat, p = run_mannwhitney(data[algo_a]["fzc"], data[algo_b]["fzc"])
-        if stat is not None:
-            sig = p < 0.05
-            comparison = f"{algo_a.upper()} vs {algo_b.upper()}"
-            print(f"{comparison:<16} | FZC{' ':<19} | Mann-Whitney U{' ':<6} | {p:>10.4f} | {'Yes' if sig else 'No'}")
-
-        # Mean Reward
-        stat, p = run_welch_ttest(data[algo_a]["mean_reward"], data[algo_b]["mean_reward"])
-        if stat is not None:
-            sig = p < 0.05
-            comparison = f"{algo_a.upper()} vs {algo_b.upper()}"
-            print(f"{comparison:<16} | Mean Reward{' ':<12} | Welch t-test{' ':<8} | {p:>10.4f} | {'Yes' if sig else 'No'}")
-
-        # Adaptation Latency (Spike)
-        a_lat = spike_latency[algo_a]
-        b_lat = spike_latency[algo_b]
-        if len(a_lat) > 0 and len(b_lat) > 0:
-            stat, p = run_welch_ttest(a_lat, b_lat)
-            if stat is not None:
-                sig = p < 0.05
-                comparison = f"{algo_a.upper()} vs {algo_b.upper()}"
-                print(f"{comparison:<16} | Adaptation Latency{' ':<5} | Welch t-test{' ':<8} | {p:>10.4f} | {'Yes' if sig else 'No'}")
-
-print("=" * 90)
+if __name__ == "__main__":
+    main()

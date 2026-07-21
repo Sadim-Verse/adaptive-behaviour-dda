@@ -11,7 +11,7 @@ import numpy as np
 os.makedirs('./logs/figures', exist_ok=True)
 
 # ── Load data ──
-steady_csv = "./logs/delta_sensitivity/delta_sensitivity_raw_seeds.csv"
+steady_csv = "./logs/delta_sensitivity_spike/delta_sensitivity_raw_seeds_spike.csv"
 if not os.path.exists(steady_csv):
     print("Data file not found. Skipping.")
     exit()
@@ -71,6 +71,6 @@ for i, env in enumerate(['single', 'multi']):
 
 fig.suptitle('Figure 5 — Delta Sensitivity Curves (Steady Mode)', fontsize=14, fontweight='bold')
 plt.tight_layout()
-plt.savefig('./logs/figures/figure5_delta_sensitivity.png', dpi=300, bbox_inches='tight')
+plt.savefig('./report_figures/figure5_delta_sensitivity_spike.png', dpi=300, bbox_inches='tight')
 plt.close()
-print("✅ Figure 5 saved to ./logs/figures/figure5_delta_sensitivity.png")
+print("✅ Figure 5 saved to ./report_figures/figure5_delta_sensitivity_spike.png")
